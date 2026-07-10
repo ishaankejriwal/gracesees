@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# Keep large mask archives local; they are required data, not source code.
+masks/*.zip
+*.zip
+
+# Local visual reference, not needed for the current Africa L3 rerun.
+Level 2 Hydrobasins Layout.gif

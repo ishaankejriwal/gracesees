@@ -1,0 +1,16 @@
+pandas
+numpy
+matplotlib
+scikit-learn
+torch
+xarray
+netcdf4
+geopandas
+shapely
+pyproj
+rasterio
+nbformat
+earthaccess
+nbclient
+ipykernel
+xgboost
