@@ -48,6 +48,8 @@ EXTRA_MODEL_NAMES = {
     "ridge_residual_mlp",
     "ridge_neighbor_ar",
     "ridge_neighbor_residual_mlp",
+    "ridge_neighbor_residual_tcn",
+    "ridge_neighbor_residual_lstm",
 }
 
 
@@ -140,6 +142,141 @@ def train_residual_mlp(train_df, val_df, test_df, feature_cols, base_preds, seed
             return np.array([])
         x = torch.tensor(x_scaler.transform(frame[feature_cols]), dtype=torch.float32)
         basin = torch.tensor(frame["basin_id"].astype(str).map(basin_to_idx).to_numpy(), dtype=torch.long)
+        model.eval()
+        with torch.no_grad():
+            residual_scaled = model(x, basin).numpy()
+        residual = residual_scaler.inverse_transform(residual_scaled).ravel()
+        return base_preds[split_name] + residual
+
+    return model, {
+        "train": predict(train_df, "train"),
+        "val": predict(val_df, "val"),
+        "test": predict(test_df, "test"),
+    }
+
+
+def train_residual_sequence_model(
+    train_df,
+    val_df,
+    test_df,
+    feature_cols,
+    base_preds,
+    architecture: str,
+    seed: int = RANDOM_SEED,
+):
+    import torch
+    from torch import nn
+    from sklearn.preprocessing import StandardScaler
+
+    if architecture not in {"tcn", "lstm"}:
+        raise ValueError(f"Unsupported residual sequence architecture: {architecture}")
+
+    set_seeds(seed)
+    lag_numbers = sorted(
+        {int(col.split("_")[-1]) for col in feature_cols if col.startswith("lag_") or col.startswith("neighbor_lag_")},
+        reverse=True,
+    )
+    sequence_cols = []
+    for lag in lag_numbers:
+        step_cols = [f"lag_{lag}"]
+        neighbor_col = f"neighbor_lag_{lag}"
+        if neighbor_col in feature_cols:
+            step_cols.append(neighbor_col)
+        sequence_cols.extend(step_cols)
+    missing = [col for col in sequence_cols if col not in feature_cols]
+    if missing:
+        raise ValueError(f"Missing sequence feature columns: {missing}")
+
+    x_scaler = StandardScaler().fit(train_df[sequence_cols])
+    residual_scaler = StandardScaler().fit(
+        (train_df["target_twsa_cm"].to_numpy() - base_preds["train"]).reshape(-1, 1)
+    )
+    basin_ids = sorted(
+        set(train_df["basin_id"].astype(str))
+        | set(val_df["basin_id"].astype(str))
+        | set(test_df["basin_id"].astype(str))
+    )
+    basin_to_idx = {basin_id: i for i, basin_id in enumerate(basin_ids)}
+    embedding_dim = min(8, max(2, int(np.ceil(np.sqrt(len(basin_ids))))))
+    seq_len = len(lag_numbers)
+    channels = len(sequence_cols) // seq_len
+
+    def tensors(frame, split_name):
+        scaled = x_scaler.transform(frame[sequence_cols])
+        x = torch.tensor(scaled.reshape(len(frame), seq_len, channels), dtype=torch.float32)
+        basin = torch.tensor(frame["basin_id"].astype(str).map(basin_to_idx).to_numpy(), dtype=torch.long)
+        residual = frame["target_twsa_cm"].to_numpy() - base_preds[split_name]
+        y = torch.tensor(residual_scaler.transform(residual.reshape(-1, 1)), dtype=torch.float32)
+        return x, basin, y
+
+    x_train, basin_train, y_train = tensors(train_df, "train")
+    has_val = len(val_df) > 0
+    x_val, basin_val, y_val = tensors(val_df, "val") if has_val else (None, None, None)
+
+    class ResidualSequenceModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.basin_embedding = nn.Embedding(len(basin_ids), embedding_dim)
+            hidden = 24
+            if architecture == "lstm":
+                self.encoder = nn.LSTM(input_size=channels, hidden_size=hidden, batch_first=True)
+                encoded_dim = hidden
+            else:
+                self.encoder = nn.Sequential(
+                    nn.Conv1d(channels, hidden, kernel_size=3, padding=1),
+                    nn.ReLU(),
+                    nn.Dropout(0.10),
+                    nn.Conv1d(hidden, hidden, kernel_size=3, padding=1),
+                    nn.ReLU(),
+                )
+                encoded_dim = hidden
+            self.head = nn.Sequential(
+                nn.Linear(encoded_dim + embedding_dim, 24),
+                nn.ReLU(),
+                nn.Dropout(0.10),
+                nn.Linear(24, 1),
+            )
+
+        def forward(self, x, basin):
+            if architecture == "lstm":
+                _, (h, _) = self.encoder(x)
+                seq_state = h[-1]
+            else:
+                h = self.encoder(x.transpose(1, 2))
+                seq_state = h.mean(dim=2)
+            basin_state = self.basin_embedding(basin)
+            return self.head(torch.cat([seq_state, basin_state], dim=1))
+
+    model = ResidualSequenceModel()
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    loss_fn = nn.MSELoss()
+    best_state = None
+    best_val = float("inf")
+    stale = 0
+    for _ in range(300):
+        model.train()
+        opt.zero_grad()
+        loss = loss_fn(model(x_train, basin_train), y_train)
+        loss.backward()
+        opt.step()
+        model.eval()
+        with torch.no_grad():
+            val_loss = loss_fn(model(x_val, basin_val), y_val).item() if has_val else loss.item()
+        if val_loss < best_val:
+            best_val = val_loss
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            stale = 0
+        else:
+            stale += 1
+        if stale >= 40:
+            break
+    if best_state:
+        model.load_state_dict(best_state)
+
+    def predict(frame, split_name):
+        if frame.empty:
+            return np.array([])
+        x, basin, _ = tensors(frame, split_name)
         model.eval()
         with torch.no_grad():
             residual_scaled = model(x, basin).numpy()
@@ -318,6 +455,20 @@ def main() -> None:
             best_graph,
         )
     )
+    for architecture, model_name, seed in [
+        ("tcn", "ridge_neighbor_residual_tcn", RANDOM_SEED + 2),
+        ("lstm", "ridge_neighbor_residual_lstm", RANDOM_SEED + 3),
+    ]:
+        _, sequence_preds = train_residual_sequence_model(
+            best_neighbor_splits["train"],
+            best_neighbor_splits["val"],
+            best_neighbor_splits["test"],
+            best_neighbor_cols,
+            best_neighbor_base_preds,
+            architecture=architecture,
+            seed=seed,
+        )
+        prediction_parts.extend(frame_predictions(best_neighbor_splits, sequence_preds, model_name, best_graph))
 
     new_predictions = pd.concat(prediction_parts, ignore_index=True)
     existing = (
