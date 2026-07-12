@@ -157,7 +157,22 @@ def build_basin_month(experiment: MaskExperiment, force: bool = True) -> pd.Data
 def build_lagged(basin_month: pd.DataFrame, paths: ExperimentPaths) -> pd.DataFrame:
     validate_basin_month(basin_month)
     lagged = make_lagged_dataset(basin_month, LAGS, paths.lagged_dataset_csv)
-    validate_lagged_dataset(lagged, expected_basin_ids=set(basin_month["basin_id"].astype(str).unique()))
+    validate_lagged_dataset(lagged)
+    source_basin_ids = set(basin_month["basin_id"].astype(str).unique())
+    lagged_basin_ids = set(lagged["basin_id"].astype(str).unique())
+    dropped_basin_ids = sorted(source_basin_ids - lagged_basin_ids)
+    if dropped_basin_ids:
+        print(
+            "Warning: dropped "
+            f"{len(dropped_basin_ids)} mask(s) with no complete lag/target rows. "
+            f"Examples: {dropped_basin_ids[:5]}"
+        )
+    unique_dates = pd.to_datetime(lagged["date"]).nunique()
+    if unique_dates < 3:
+        raise ValueError(
+            "Lagged dataset has fewer than three unique dates after dropping incomplete lag rows. "
+            "Check that the custom masks overlap GRACE cells with valid data across enough months."
+        )
     basin_month_provenance = read_json(paths.basin_month_provenance_json) or {"source": str(paths.basin_month_csv)}
     write_json(paths.lagged_dataset_provenance_json, _lagged_provenance(basin_month_provenance))
     print(

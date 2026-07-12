@@ -436,6 +436,13 @@ def main() -> None:
     paths = experiment.paths
     lagged = pd.read_csv(paths.lagged_dataset_csv, parse_dates=["date"])
     validate_lagged_dataset(lagged)
+    unique_dates = pd.to_datetime(lagged["date"]).nunique()
+    if unique_dates < 3:
+        raise ValueError(
+            f"{paths.lagged_dataset_csv} has fewer than three unique dates. "
+            "Rerun scripts/run_africa_l3.py after checking that the custom masks overlap "
+            "GRACE cells with enough valid monthly data."
+        )
     splits = chronological_fraction_split(lagged, TRAIN_FRACTION, VAL_FRACTION, TEST_FRACTION)
     for frame in splits.values():
         validate_lagged_dataset(frame)
