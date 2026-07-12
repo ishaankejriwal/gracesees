@@ -119,6 +119,42 @@ def _lagged_provenance(basin_month_provenance: dict) -> dict:
     }
 
 
+def summarize_basin_month_coverage(basin_month: pd.DataFrame) -> pd.DataFrame:
+    data = basin_month.copy()
+    data["basin_id"] = data["basin_id"].astype(str)
+    data["date"] = pd.to_datetime(data["date"])
+    summary = (
+        data.groupby(["basin_id", "basin_name"], dropna=False)
+        .agg(
+            months=("date", "nunique"),
+            valid_months=("twsa_cm", lambda values: int(values.notna().sum())),
+            first_date=("date", "min"),
+            last_date=("date", "max"),
+            min_twsa_cm=("twsa_cm", "min"),
+            max_twsa_cm=("twsa_cm", "max"),
+        )
+        .reset_index()
+    )
+    summary["missing_months"] = summary["months"] - summary["valid_months"]
+    return summary.sort_values(["valid_months", "basin_name"]).reset_index(drop=True)
+
+
+def print_basin_month_coverage(basin_month: pd.DataFrame, paths: ExperimentPaths) -> None:
+    summary = summarize_basin_month_coverage(basin_month)
+    output_path = paths.output_dir / "basin_month_coverage.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(output_path, index=False)
+    print(f"Saved basin-month coverage diagnostics to {output_path}")
+    print("Lowest valid-month mask coverage:")
+    print(summary.head(10).to_string(index=False))
+    if summary["valid_months"].eq(0).all():
+        raise ValueError(
+            "All selected masks produced only NaN GRACE TWSA values. "
+            "Check that custom mask rows are geographic lon,lat,weight values in degrees, "
+            "not mode/signal IDs, raster row/column indices, projected x/y meters, or normalized coordinates."
+        )
+
+
 def build_basin_month(experiment: MaskExperiment, force: bool = True) -> pd.DataFrame:
     experiment.paths.ensure_dirs()
     grace_nc = find_first_file(DATA_RAW, [".nc", ".nc4"])
@@ -136,6 +172,7 @@ def build_basin_month(experiment: MaskExperiment, force: bool = True) -> pd.Data
             )
         basin_month = read_basin_month_csv(experiment.paths.basin_month_csv)
         validate_basin_month(basin_month, expected_basin_ids=expected_basin_ids)
+        print_basin_month_coverage(basin_month, experiment.paths)
         return basin_month
 
     print(f"Aggregating masks for {experiment.paths.name} from {experiment.mask_zip.name}")
@@ -151,6 +188,7 @@ def build_basin_month(experiment: MaskExperiment, force: bool = True) -> pd.Data
     basin_month.to_csv(experiment.paths.basin_month_csv, index=False)
     write_json(experiment.paths.basin_month_provenance_json, provenance)
     print(f"Saved {len(basin_month):,} basin-month rows to {experiment.paths.basin_month_csv}")
+    print_basin_month_coverage(basin_month, experiment.paths)
     return basin_month
 
 

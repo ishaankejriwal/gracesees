@@ -108,13 +108,14 @@ def read_positive_mask_cells_from_zip(zip_path: Path, member_name: str) -> pd.Da
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open(member_name) as handle:
             if member_name.endswith(".mask.csv"):
-                df = pd.read_csv(handle, names=["lon", "lat", "weight"])
+                df = pd.read_csv(handle, names=["lon", "lat", "weight"], dtype=str, low_memory=False)
             else:
                 df = pd.read_csv(
                     handle,
                     sep=r"\s+",
                     names=["lon", "lat", "weight"],
                     engine="python",
+                    dtype=str,
                 )
     for column in ["lon", "lat", "weight"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
