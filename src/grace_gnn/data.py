@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 REQUIRED_BASIN_MONTH_COLUMNS = {"date", "basin_id", "twsa_cm"}
+MASK_SUFFIXES = (".mask.xyz", ".mask.csv", ".xyz", ".csv")
 
 
 def print_basin_month_requirements() -> None:
@@ -54,7 +55,7 @@ def find_mask_zips(directory: Path) -> list[Path]:
 
 def _fallback_mask_name(name: str) -> tuple[str, str]:
     stem = Path(name).name
-    for suffix in [".mask.xyz", ".mask.csv"]:
+    for suffix in MASK_SUFFIXES:
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
@@ -67,7 +68,7 @@ def _fallback_mask_name(name: str) -> tuple[str, str]:
 
 def parse_mask_name(name: str, strict: bool = False) -> tuple[str, str]:
     stem = Path(name).name
-    for suffix in [".mask.xyz", ".mask.csv"]:
+    for suffix in MASK_SUFFIXES:
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
@@ -88,7 +89,7 @@ def list_mask_members(
     for zip_path in mask_zips:
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
-                if not (member.endswith(".mask.xyz") or member.endswith(".mask.csv")):
+                if not member.endswith(MASK_SUFFIXES):
                     continue
                 basin_id, basin_name = parse_mask_name(member, strict=strict)
                 if name_filter and name_filter.lower() not in basin_name.lower():
@@ -107,7 +108,7 @@ def list_mask_members(
 def read_positive_mask_cells_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open(member_name) as handle:
-            if member_name.endswith(".mask.csv"):
+            if member_name.endswith((".mask.csv", ".csv")):
                 df = pd.read_csv(handle, names=["lon", "lat", "weight"], dtype=str, low_memory=False)
             else:
                 df = pd.read_csv(
@@ -296,7 +297,7 @@ def aggregate_grace_netcdf_to_mask_zips(
     basin_name_exclude: str | None = None,
     strict_mask_names: bool = True,
 ) -> pd.DataFrame:
-    """Aggregate GRACE NetCDF to HydroBASINS .mask.xyz files stored in zip archives."""
+    """Aggregate GRACE NetCDF to mask CSV/XYZ files stored in zip archives."""
     try:
         import xarray as xr
     except ImportError as exc:
@@ -308,7 +309,7 @@ def aggregate_grace_netcdf_to_mask_zips(
             ~members["basin_name"].str.contains(basin_name_exclude, case=False, na=False)
         ].copy()
     if members.empty:
-        raise FileNotFoundError("No .mask.xyz files matched the requested basin filter.")
+        raise FileNotFoundError("No .csv/.xyz mask files matched the requested basin filter.")
     from .validation import validate_unique_mask_members
 
     validate_unique_mask_members(members)

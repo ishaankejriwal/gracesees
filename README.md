@@ -72,7 +72,7 @@ The L3 zip contains `.mask.csv` files. The pipeline parses those directly.
 ## Run With Custom Masks
 
 Custom mask zips can be placed anywhere, but `masks/` is the simplest location.
-Each zip member should end in `.mask.csv` or `.mask.xyz`.
+Each zip member should end in `.csv`, `.xyz`, `.mask.csv`, or `.mask.xyz`.
 
 The code no longer requires HydroBASINS basin IDs in custom mask filenames. If a
 filename does not look like `HyBas_<id>_<name>_LevN_quartdeg.mask.csv`, the
@@ -85,14 +85,14 @@ Supported mask rows:
 lon,lat,weight
 ```
 
-for `.mask.csv`, or:
+for `.csv` / `.mask.csv`, or:
 
 ```text
 lon lat weight
 ```
 
-for `.mask.xyz`. Header rows in CSV files are allowed. Cells with `weight <= 0`
-are ignored.
+for `.xyz` / `.mask.xyz`. Header rows in CSV files are allowed. Cells with
+`weight <= 0` are ignored.
 
 Example custom run:
 
