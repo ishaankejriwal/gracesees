@@ -69,6 +69,55 @@ masks/L3-20260709T200427Z-2-001.zip
 
 The L3 zip contains `.mask.csv` files. The pipeline parses those directly.
 
+## Run With Custom Masks
+
+Custom mask zips can be placed anywhere, but `masks/` is the simplest location.
+Each zip member should end in `.mask.csv` or `.mask.xyz`.
+
+The code no longer requires HydroBASINS basin IDs in custom mask filenames. If a
+filename does not look like `HyBas_<id>_<name>_LevN_quartdeg.mask.csv`, the
+pipeline derives a stable internal `basin_id` from the zip member name and uses
+the readable filename stem as `basin_name`.
+
+Supported mask rows:
+
+```text
+lon,lat,weight
+```
+
+for `.mask.csv`, or:
+
+```text
+lon lat weight
+```
+
+for `.mask.xyz`. Header rows in CSV files are allowed. Cells with `weight <= 0`
+are ignored.
+
+Example custom run:
+
+```bash
+.\.venv\Scripts\python.exe scripts\run_africa_l3.py --experiment friend_masks --mask-zip masks\friend_masks.zip --force
+.\.venv\Scripts\python.exe scripts\run_africa_l3_extra_architectures.py --experiment friend_masks --mask-zip masks\friend_masks.zip
+```
+
+Optional filters:
+
+```bash
+--basin-name-filter africa
+--basin-name-exclude madagascar
+--strict-mask-names
+```
+
+Use `--strict-mask-names` only when you want to require HydroBASINS-style names.
+Outputs for the example above are written to:
+
+```text
+outputs/friend_masks/
+data/processed/basin_month_grace_friend_masks.csv
+data/processed/lagged_grace_dataset_friend_masks.csv
+```
+
 ## Reproduce The Current Results
 
 Run these commands from the project root:

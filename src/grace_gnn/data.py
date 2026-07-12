@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import hashlib
 import re
 import zipfile
 
@@ -51,6 +52,19 @@ def find_mask_zips(directory: Path) -> list[Path]:
     return sorted(directory.rglob("*.zip"))
 
 
+def _fallback_mask_name(name: str) -> tuple[str, str]:
+    stem = Path(name).name
+    for suffix in [".mask.xyz", ".mask.csv"]:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    basin_name = re.sub(r"[_\-]+", " ", stem).strip() or stem
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", stem).strip("_").lower()
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    basin_id = slug or f"mask_{digest}"
+    return f"{basin_id}_{digest}", basin_name
+
+
 def parse_mask_name(name: str, strict: bool = False) -> tuple[str, str]:
     stem = Path(name).name
     for suffix in [".mask.xyz", ".mask.csv"]:
@@ -61,7 +75,7 @@ def parse_mask_name(name: str, strict: bool = False) -> tuple[str, str]:
     if not match:
         if strict:
             raise ValueError(f"Could not parse HydroBASINS mask filename: {name}")
-        return stem, stem
+        return _fallback_mask_name(name)
     return match.group(1), match.group(2).replace("_", " ")
 
 
@@ -102,10 +116,10 @@ def read_positive_mask_cells_from_zip(zip_path: Path, member_name: str) -> pd.Da
                     names=["lon", "lat", "weight"],
                     engine="python",
                 )
+    for column in ["lon", "lat", "weight"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = df.dropna(subset=["lon", "lat", "weight"])
     df = df[df["weight"] > 0].copy()
-    df["lon"] = df["lon"].astype(float)
-    df["lat"] = df["lat"].astype(float)
-    df["weight"] = df["weight"].astype(float)
     return df
 
 
@@ -279,6 +293,7 @@ def aggregate_grace_netcdf_to_mask_zips(
     output_csv: Path,
     basin_name_filter: str | None = None,
     basin_name_exclude: str | None = None,
+    strict_mask_names: bool = True,
 ) -> pd.DataFrame:
     """Aggregate GRACE NetCDF to HydroBASINS .mask.xyz files stored in zip archives."""
     try:
@@ -286,7 +301,7 @@ def aggregate_grace_netcdf_to_mask_zips(
     except ImportError as exc:
         raise ImportError("Install xarray and netcdf4 for GRACE NetCDF preprocessing.") from exc
 
-    members = list_mask_members(mask_zips, basin_name_filter, strict=True)
+    members = list_mask_members(mask_zips, basin_name_filter, strict=strict_mask_names)
     if basin_name_exclude and not members.empty:
         members = members[
             ~members["basin_name"].str.contains(basin_name_exclude, case=False, na=False)

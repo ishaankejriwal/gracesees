@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -9,27 +10,12 @@ sys.path.append(str(ROOT / "src"))
 import pandas as pd
 
 from grace_gnn.config import (
-    AFRICA_L3_MASK_ZIP_NAME,
-    BASIN_MONTH_CSV,
-    BASIN_MONTH_PROVENANCE_JSON,
     DATA_RAW,
-    EXPERIMENT_REGION,
-    LAGGED_DATASET_CSV,
-    LAGGED_DATASET_PROVENANCE_JSON,
     LAGS,
     RANDOM_SEED,
-    REGION_CORRELATION_MATRIX_CSV,
-    REGION_CORRELATION_PAIRS_CSV,
-    REGION_IMPROVEMENT_BY_BASIN_CSV,
-    REGION_METRICS_BY_BASIN_CSV,
-    REGION_METRICS_OVERALL_CSV,
-    REGION_OUTPUTS,
-    REGION_PREDICTION_DIAGNOSTICS_CSV,
-    REGION_PREDICTIONS_CSV,
     TEST_FRACTION,
     TRAIN_FRACTION,
     VAL_FRACTION,
-    ensure_dirs,
 )
 from grace_gnn.correlation import region_correlation_matrix, region_correlation_pairs
 from grace_gnn.data import (
@@ -39,7 +25,8 @@ from grace_gnn.data import (
     read_basin_month_csv,
 )
 from grace_gnn.evaluate import graph_prediction_frame, prediction_frame
-from grace_gnn.features import feature_columns, filter_region, make_lagged_dataset
+from grace_gnn.experiment import ExperimentPaths, MaskExperiment
+from grace_gnn.features import feature_columns, make_lagged_dataset
 from grace_gnn.graph import (
     build_knn_edges_from_mask_zips,
     make_degree_matched_random_edges,
@@ -77,90 +64,110 @@ from grace_gnn.validation import (
 )
 
 
-def _l3_mask_zip() -> Path:
-    path = ROOT / "masks" / AFRICA_L3_MASK_ZIP_NAME
+def _resolve_mask_zip(mask_zip: str | Path) -> Path:
+    path = Path(mask_zip)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.exists() and not str(mask_zip).startswith("masks"):
+        candidate = ROOT / "masks" / Path(mask_zip).name
+        if candidate.exists():
+            path = candidate
     if not path.exists():
-        raise FileNotFoundError(f"Missing L3 mask zip: {path}")
+        raise FileNotFoundError(f"Missing mask zip: {path}")
     return path
 
 
-def _selected_l3_mask_members() -> pd.DataFrame:
-    members = list_mask_members([_l3_mask_zip()], strict=True)
-    members = members[~members["basin_name"].str.contains("madagascar", case=False, na=False)].copy()
+def _selected_mask_members(experiment: MaskExperiment) -> pd.DataFrame:
+    members = list_mask_members(
+        [experiment.mask_zip],
+        experiment.basin_name_filter,
+        strict=experiment.strict_mask_names,
+    )
+    if experiment.basin_name_exclude and not members.empty:
+        members = members[
+            ~members["basin_name"].str.contains(experiment.basin_name_exclude, case=False, na=False)
+        ].copy()
     validate_unique_mask_members(members)
     return members
 
 
-def _basin_month_provenance(grace_nc: Path, mask_zip: Path, members: pd.DataFrame) -> dict:
-    return {
-        "experiment_region": EXPERIMENT_REGION,
+def _basin_month_provenance(grace_nc: Path, experiment: MaskExperiment, members: pd.DataFrame) -> dict:
+    provenance = {
+        "experiment_region": experiment.paths.name,
         "grace_netcdf": file_fingerprint(grace_nc),
-        "mask_zips": [file_fingerprint(mask_zip)],
-        "mask_format": "HydroBASINS .mask.csv/.mask.xyz members",
-        "basin_name_exclude": "madagascar",
+        "mask_zips": [file_fingerprint(experiment.mask_zip)],
+        "mask_format": (
+            "HydroBASINS .mask.csv/.mask.xyz members"
+            if experiment.strict_mask_names
+            else ".mask.csv/.mask.xyz members"
+        ),
+        "basin_name_exclude": experiment.basin_name_exclude,
         "basin_count": int(members["basin_id"].nunique()),
         "basin_ids": sorted(members["basin_id"].astype(str).unique()),
     }
+    if experiment.basin_name_filter is not None or not experiment.strict_mask_names:
+        provenance["basin_name_filter"] = experiment.basin_name_filter
+        provenance["strict_mask_names"] = experiment.strict_mask_names
+    return provenance
 
 
 def _lagged_provenance(basin_month_provenance: dict) -> dict:
     return {
-        "experiment_region": EXPERIMENT_REGION,
+        "experiment_region": basin_month_provenance.get("experiment_region"),
         "source_basin_month": basin_month_provenance,
         "lags": LAGS,
     }
 
 
-def build_basin_month(force: bool = True) -> pd.DataFrame:
-    ensure_dirs()
+def build_basin_month(experiment: MaskExperiment, force: bool = True) -> pd.DataFrame:
+    experiment.paths.ensure_dirs()
     grace_nc = find_first_file(DATA_RAW, [".nc", ".nc4"])
     if grace_nc is None:
         raise FileNotFoundError(f"No GRACE NetCDF found in {DATA_RAW}")
 
-    mask_zip = _l3_mask_zip()
-    members = _selected_l3_mask_members()
+    members = _selected_mask_members(experiment)
     expected_basin_ids = set(members["basin_id"].astype(str))
-    provenance = _basin_month_provenance(grace_nc, mask_zip, members)
-    if BASIN_MONTH_CSV.exists() and not force:
-        if not require_matching_provenance(BASIN_MONTH_PROVENANCE_JSON, provenance):
+    provenance = _basin_month_provenance(grace_nc, experiment, members)
+    if experiment.paths.basin_month_csv.exists() and not force:
+        if not require_matching_provenance(experiment.paths.basin_month_provenance_json, provenance):
             raise ValueError(
-                f"Refusing to reuse {BASIN_MONTH_CSV} because provenance is missing or stale. "
+                f"Refusing to reuse {experiment.paths.basin_month_csv} because provenance is missing or stale. "
                 "Run build_basin_month(force=True) or delete the stale processed file."
             )
-        basin_month = filter_region(read_basin_month_csv(BASIN_MONTH_CSV), EXPERIMENT_REGION)
+        basin_month = read_basin_month_csv(experiment.paths.basin_month_csv)
         validate_basin_month(basin_month, expected_basin_ids=expected_basin_ids)
         return basin_month
 
-    print(f"Aggregating L3 Africa masks excluding Madagascar from {mask_zip.name}")
+    print(f"Aggregating masks for {experiment.paths.name} from {experiment.mask_zip.name}")
     basin_month = aggregate_grace_netcdf_to_mask_zips(
         grace_nc,
-        [mask_zip],
-        BASIN_MONTH_CSV,
-        basin_name_exclude="madagascar",
+        [experiment.mask_zip],
+        experiment.paths.basin_month_csv,
+        basin_name_filter=experiment.basin_name_filter,
+        basin_name_exclude=experiment.basin_name_exclude,
+        strict_mask_names=experiment.strict_mask_names,
     )
-    basin_month = filter_region(basin_month, EXPERIMENT_REGION)
     validate_basin_month(basin_month, expected_basin_ids=expected_basin_ids)
-    basin_month.to_csv(BASIN_MONTH_CSV, index=False)
-    write_json(BASIN_MONTH_PROVENANCE_JSON, provenance)
-    print(f"Saved {len(basin_month):,} basin-month rows to {BASIN_MONTH_CSV}")
+    basin_month.to_csv(experiment.paths.basin_month_csv, index=False)
+    write_json(experiment.paths.basin_month_provenance_json, provenance)
+    print(f"Saved {len(basin_month):,} basin-month rows to {experiment.paths.basin_month_csv}")
     return basin_month
 
 
-def build_lagged(basin_month: pd.DataFrame) -> pd.DataFrame:
+def build_lagged(basin_month: pd.DataFrame, paths: ExperimentPaths) -> pd.DataFrame:
     validate_basin_month(basin_month)
-    lagged = make_lagged_dataset(basin_month, LAGS, LAGGED_DATASET_CSV)
-    lagged = filter_region(lagged, EXPERIMENT_REGION)
+    lagged = make_lagged_dataset(basin_month, LAGS, paths.lagged_dataset_csv)
     validate_lagged_dataset(lagged, expected_basin_ids=set(basin_month["basin_id"].astype(str).unique()))
-    basin_month_provenance = read_json(BASIN_MONTH_PROVENANCE_JSON) or {"source": str(BASIN_MONTH_CSV)}
-    write_json(LAGGED_DATASET_PROVENANCE_JSON, _lagged_provenance(basin_month_provenance))
+    basin_month_provenance = read_json(paths.basin_month_provenance_json) or {"source": str(paths.basin_month_csv)}
+    write_json(paths.lagged_dataset_provenance_json, _lagged_provenance(basin_month_provenance))
     print(
         f"Saved {len(lagged):,} lagged samples across "
-        f"{lagged['basin_id'].nunique()} L3 basins to {LAGGED_DATASET_CSV}"
+        f"{lagged['basin_id'].nunique()} masks to {paths.lagged_dataset_csv}"
     )
     return lagged
 
 
-def train_baselines(lagged: pd.DataFrame) -> pd.DataFrame:
+def train_baselines(lagged: pd.DataFrame, paths: ExperimentPaths) -> pd.DataFrame:
     splits = chronological_fraction_split(lagged, TRAIN_FRACTION, VAL_FRACTION, TEST_FRACTION)
     total = sum(len(frame) for frame in splits.values())
     for name, frame in splits.items():
@@ -188,9 +195,9 @@ def train_baselines(lagged: pd.DataFrame) -> pd.DataFrame:
             prediction_parts.append(prediction_frame(frame, preds[split_name], model_name, graph_type, split_name))
 
     corr = region_correlation_matrix(splits["train"])
-    REGION_CORRELATION_MATRIX_CSV.parent.mkdir(parents=True, exist_ok=True)
-    corr.to_csv(REGION_CORRELATION_MATRIX_CSV)
-    region_correlation_pairs(corr).to_csv(REGION_CORRELATION_PAIRS_CSV, index=False)
+    paths.correlation_matrix_csv.parent.mkdir(parents=True, exist_ok=True)
+    corr.to_csv(paths.correlation_matrix_csv)
+    region_correlation_pairs(corr).to_csv(paths.correlation_pairs_csv, index=False)
 
     if torch_available():
         _, mlp_preds = train_mlp(splits["train"], splits["val"], splits["test"], features, seed=RANDOM_SEED)
@@ -217,24 +224,24 @@ def train_baselines(lagged: pd.DataFrame) -> pd.DataFrame:
         print("PyTorch unavailable; skipping basin-only NN and GNN models.")
 
     predictions = pd.concat(prediction_parts, ignore_index=True)
-    REGION_PREDICTIONS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    predictions.to_csv(REGION_PREDICTIONS_CSV, index=False)
+    paths.predictions_csv.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(paths.predictions_csv, index=False)
     return predictions
 
 
-def train_gnns(lagged: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFrame:
+def train_gnns(lagged: pd.DataFrame, predictions: pd.DataFrame, experiment: MaskExperiment) -> pd.DataFrame:
     if not torch_available():
         return predictions
 
-    mask_zip = _l3_mask_zip()
     basin_ids = sorted(lagged["basin_id"].astype(str).unique())
     basin_names = sorted(lagged["basin_name"].dropna().unique())
     real_directed = build_knn_edges_from_mask_zips(
-        [mask_zip],
+        [experiment.mask_zip],
         basin_names,
-        REGION_OUTPUTS / "edges_real_knn_directed.csv",
+        experiment.paths.output_dir / "edges_real_knn_directed.csv",
         k=3,
         graph_type="real_knn_directed",
+        strict_mask_names=experiment.strict_mask_names,
     )
     graph_variants = {
         "real_knn_directed": real_directed,
@@ -244,7 +251,7 @@ def train_gnns(lagged: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFrame:
     }
     for graph_type, edges in graph_variants.items():
         validate_edges(edges, set(basin_ids), graph_type=graph_type)
-        save_edges(edges, REGION_OUTPUTS / f"edges_{graph_type}.csv")
+        save_edges(edges, experiment.paths.output_dir / f"edges_{graph_type}.csv")
         print(f"Saved {len(edges):,} {graph_type} edges")
 
     splits = chronological_fraction_split(lagged, TRAIN_FRACTION, VAL_FRACTION, TEST_FRACTION)
@@ -270,30 +277,57 @@ def train_gnns(lagged: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFrame:
     gnn_predictions = pd.concat(gnn_parts, ignore_index=True)
     combined = pd.concat([predictions, gnn_predictions], ignore_index=True)
     combined = combined.drop_duplicates(["date", "basin_id", "model_name", "graph_type", "split"], keep="last")
-    combined.to_csv(REGION_PREDICTIONS_CSV, index=False)
+    combined.to_csv(experiment.paths.predictions_csv, index=False)
     return combined
 
 
-def save_metrics(predictions: pd.DataFrame) -> None:
+def save_metrics(predictions: pd.DataFrame, paths: ExperimentPaths) -> None:
     overall = metrics_overall(predictions).sort_values(["split", "rmse_cm"])
     by_basin = metrics_by_basin(predictions, split="test").sort_values(["basin_name", "rmse_cm"])
     improvement = improvement_by_basin(by_basin)
     diagnostics = prediction_diagnostics(predictions)
 
-    overall.to_csv(REGION_METRICS_OVERALL_CSV, index=False)
-    by_basin.to_csv(REGION_METRICS_BY_BASIN_CSV, index=False)
-    improvement.to_csv(REGION_IMPROVEMENT_BY_BASIN_CSV, index=False)
-    diagnostics.to_csv(REGION_PREDICTION_DIAGNOSTICS_CSV, index=False)
+    overall.to_csv(paths.metrics_overall_csv, index=False)
+    by_basin.to_csv(paths.metrics_by_basin_csv, index=False)
+    improvement.to_csv(paths.improvement_by_basin_csv, index=False)
+    diagnostics.to_csv(paths.prediction_diagnostics_csv, index=False)
     print("Test metrics:")
     print(overall[overall["split"] == "test"].to_string(index=False))
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a GRACE mask-region forecasting experiment.")
+    parser.add_argument("--experiment", default="africa_l3_no_madagascar", help="Experiment/output name.")
+    parser.add_argument("--mask-zip", default=None, help="Path or filename under masks/ for the mask zip.")
+    parser.add_argument("--basin-name-filter", default=None, help="Keep only mask names containing this text.")
+    parser.add_argument("--basin-name-exclude", default=None, help="Exclude mask names containing this text.")
+    parser.add_argument("--strict-mask-names", action="store_true", help="Require HydroBASINS-style mask filenames.")
+    parser.add_argument("--force", action="store_true", help="Rebuild basin-month data even when provenance matches.")
+    return parser.parse_args()
+
+
+def experiment_from_args(args: argparse.Namespace) -> MaskExperiment:
+    if args.mask_zip is None and args.experiment == "africa_l3_no_madagascar":
+        return MaskExperiment.africa_l3_default()
+    if args.mask_zip is None:
+        raise ValueError("--mask-zip is required for custom experiments.")
+    return MaskExperiment(
+        paths=ExperimentPaths.from_name(args.experiment),
+        mask_zip=_resolve_mask_zip(args.mask_zip),
+        basin_name_filter=args.basin_name_filter,
+        basin_name_exclude=args.basin_name_exclude,
+        strict_mask_names=args.strict_mask_names,
+    )
+
+
 def main() -> None:
-    basin_month = build_basin_month(force=False)
-    lagged = build_lagged(basin_month)
-    predictions = train_baselines(lagged)
-    predictions = train_gnns(lagged, predictions)
-    save_metrics(predictions)
+    args = parse_args()
+    experiment = experiment_from_args(args)
+    basin_month = build_basin_month(experiment, force=args.force)
+    lagged = build_lagged(basin_month, experiment.paths)
+    predictions = train_baselines(lagged, experiment.paths)
+    predictions = train_gnns(lagged, predictions, experiment)
+    save_metrics(predictions, experiment.paths)
 
 
 if __name__ == "__main__":

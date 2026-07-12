@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -10,21 +11,13 @@ import numpy as np
 import pandas as pd
 
 from grace_gnn.config import (
-    AFRICA_L3_MASK_ZIP_NAME,
-    LAGGED_DATASET_CSV,
     RANDOM_SEED,
-    REGION_IMPROVEMENT_BY_BASIN_CSV,
-    REGION_METRICS_BY_BASIN_CSV,
-    REGION_METRICS_OVERALL_CSV,
-    REGION_OUTPUTS,
-    REGION_PREDICTION_DIAGNOSTICS_CSV,
-    REGION_PREDICTIONS_CSV,
     TEST_FRACTION,
     TRAIN_FRACTION,
     VAL_FRACTION,
-    ROOT,
 )
 from grace_gnn.evaluate import prediction_frame
+from grace_gnn.experiment import ExperimentPaths, MaskExperiment
 from grace_gnn.features import feature_columns
 from grace_gnn.graph import (
     build_knn_edges_from_mask_zips,
@@ -51,6 +44,43 @@ EXTRA_MODEL_NAMES = {
     "ridge_neighbor_residual_tcn",
     "ridge_neighbor_residual_lstm",
 }
+
+
+def _resolve_mask_zip(mask_zip: str | Path) -> Path:
+    path = Path(mask_zip)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.exists() and not str(mask_zip).startswith("masks"):
+        candidate = ROOT / "masks" / Path(mask_zip).name
+        if candidate.exists():
+            path = candidate
+    if not path.exists():
+        raise FileNotFoundError(f"Missing mask zip: {path}")
+    return path
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run extra GRACE mask-region model architectures.")
+    parser.add_argument("--experiment", default="africa_l3_no_madagascar", help="Experiment/output name.")
+    parser.add_argument("--mask-zip", default=None, help="Path or filename under masks/ for the mask zip.")
+    parser.add_argument("--basin-name-filter", default=None, help="Keep only mask names containing this text.")
+    parser.add_argument("--basin-name-exclude", default=None, help="Exclude mask names containing this text.")
+    parser.add_argument("--strict-mask-names", action="store_true", help="Require HydroBASINS-style mask filenames.")
+    return parser.parse_args()
+
+
+def experiment_from_args(args: argparse.Namespace) -> MaskExperiment:
+    if args.mask_zip is None and args.experiment == "africa_l3_no_madagascar":
+        return MaskExperiment.africa_l3_default()
+    if args.mask_zip is None:
+        raise ValueError("--mask-zip is required for custom experiments.")
+    return MaskExperiment(
+        paths=ExperimentPaths.from_name(args.experiment),
+        mask_zip=_resolve_mask_zip(args.mask_zip),
+        basin_name_filter=args.basin_name_filter,
+        basin_name_exclude=args.basin_name_exclude,
+        strict_mask_names=args.strict_mask_names,
+    )
 
 
 def train_ridge_predictions(train_df, val_df, test_df, feature_cols):
@@ -334,19 +364,20 @@ def add_neighbor_lag_features(df: pd.DataFrame, edges: pd.DataFrame, lag_cols: l
     return out
 
 
-def load_edge_variants(lagged: pd.DataFrame, train_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    mask_zip = ROOT / "masks" / AFRICA_L3_MASK_ZIP_NAME
-    if not mask_zip.exists():
-        raise FileNotFoundError(f"Missing L3 mask zip: {mask_zip}")
-
+def load_edge_variants(
+    lagged: pd.DataFrame,
+    train_df: pd.DataFrame,
+    experiment: MaskExperiment,
+) -> dict[str, pd.DataFrame]:
     basin_ids = sorted(lagged["basin_id"].astype(str).unique())
     basin_names = sorted(lagged["basin_name"].dropna().unique())
     real_directed = build_knn_edges_from_mask_zips(
-        [mask_zip],
+        [experiment.mask_zip],
         basin_names,
-        REGION_OUTPUTS / "edges_real_knn_directed.csv",
+        experiment.paths.output_dir / "edges_real_knn_directed.csv",
         k=3,
         graph_type="real_knn_directed",
+        strict_mask_names=experiment.strict_mask_names,
     )
     variants = {
         "real_knn_directed": real_directed,
@@ -358,7 +389,7 @@ def load_edge_variants(lagged: pd.DataFrame, train_df: pd.DataFrame) -> dict[str
     basin_id_set = set(basin_ids)
     for graph_type, edges in variants.items():
         validate_edges(edges, basin_id_set, graph_type=graph_type)
-        save_edges(edges, REGION_OUTPUTS / f"edges_{graph_type}.csv")
+        save_edges(edges, experiment.paths.output_dir / f"edges_{graph_type}.csv")
     return variants
 
 
@@ -401,7 +432,9 @@ def frame_predictions(splits, preds, model_name: str, graph_type: str) -> list[p
 
 
 def main() -> None:
-    lagged = pd.read_csv(LAGGED_DATASET_CSV, parse_dates=["date"])
+    experiment = experiment_from_args(parse_args())
+    paths = experiment.paths
+    lagged = pd.read_csv(paths.lagged_dataset_csv, parse_dates=["date"])
     validate_lagged_dataset(lagged)
     splits = chronological_fraction_split(lagged, TRAIN_FRACTION, VAL_FRACTION, TEST_FRACTION)
     for frame in splits.values():
@@ -413,7 +446,7 @@ def main() -> None:
     _, residual_preds = train_residual_mlp(splits["train"], splits["val"], splits["test"], lag_cols, base_preds)
     prediction_parts.extend(frame_predictions(splits, residual_preds, "ridge_residual_mlp", "own_lags"))
 
-    edge_variants = load_edge_variants(lagged, splits["train"])
+    edge_variants = load_edge_variants(lagged, splits["train"], experiment)
     neighbor_val_scores = {}
     neighbor_frames = {}
     for graph_type, edges in edge_variants.items():
@@ -472,8 +505,8 @@ def main() -> None:
 
     new_predictions = pd.concat(prediction_parts, ignore_index=True)
     existing = (
-        pd.read_csv(REGION_PREDICTIONS_CSV, parse_dates=["date"])
-        if REGION_PREDICTIONS_CSV.exists()
+        pd.read_csv(paths.predictions_csv, parse_dates=["date"])
+        if paths.predictions_csv.exists()
         else pd.DataFrame()
     )
     if not existing.empty:
@@ -484,17 +517,17 @@ def main() -> None:
         ["date", "basin_id", "model_name", "graph_type", "split"],
         keep="last",
     )
-    REGION_PREDICTIONS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(REGION_PREDICTIONS_CSV, index=False)
+    paths.predictions_csv.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(paths.predictions_csv, index=False)
 
     overall = metrics_overall(combined).sort_values(["split", "rmse_cm"])
     by_basin = metrics_by_basin(combined, split="test").sort_values(["basin_name", "rmse_cm"])
     improvement = improvement_by_basin(by_basin)
     diagnostics = prediction_diagnostics(combined)
-    overall.to_csv(REGION_METRICS_OVERALL_CSV, index=False)
-    by_basin.to_csv(REGION_METRICS_BY_BASIN_CSV, index=False)
-    improvement.to_csv(REGION_IMPROVEMENT_BY_BASIN_CSV, index=False)
-    diagnostics.to_csv(REGION_PREDICTION_DIAGNOSTICS_CSV, index=False)
+    overall.to_csv(paths.metrics_overall_csv, index=False)
+    by_basin.to_csv(paths.metrics_by_basin_csv, index=False)
+    improvement.to_csv(paths.improvement_by_basin_csv, index=False)
+    diagnostics.to_csv(paths.prediction_diagnostics_csv, index=False)
 
     print("Neighbor ridge validation RMSE:")
     for graph_type, rmse in sorted(neighbor_val_scores.items(), key=lambda item: item[1]):

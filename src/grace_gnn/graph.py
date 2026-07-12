@@ -159,11 +159,12 @@ def build_knn_edges_from_mask_zips(
     output_csv: Path,
     k: int = 3,
     graph_type: str = "real_knn_directed",
+    strict_mask_names: bool = True,
 ) -> pd.DataFrame:
     from .data import list_mask_members, read_positive_mask_cells_from_zip
 
     keep = set(basin_names)
-    members = list_mask_members(mask_zips, strict=True)
+    members = list_mask_members(mask_zips, strict=strict_mask_names)
     members = members[members["basin_name"].isin(keep)].copy()
     if members.empty:
         raise FileNotFoundError("No mask files matched the requested basin names.")
@@ -223,10 +224,11 @@ def build_edges_from_mask_zips(
     mask_zips: list[Path],
     output_csv: Path,
     basin_name_filter: str | None = None,
+    strict_mask_names: bool = True,
 ) -> pd.DataFrame:
     from .data import list_mask_members, read_positive_mask_cells_from_zip
 
-    members = list_mask_members(mask_zips, basin_name_filter, strict=True)
+    members = list_mask_members(mask_zips, basin_name_filter, strict=strict_mask_names)
     from .validation import validate_unique_mask_members
 
     validate_unique_mask_members(members)
