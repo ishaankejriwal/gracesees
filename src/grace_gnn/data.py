@@ -166,6 +166,13 @@ def _decode_netcdf_dates(time_coord) -> pd.DatetimeIndex:
         except Exception as exc:
             raise ValueError(f"Could not decode NetCDF time coordinate with units {units!r}.") from exc
 
+    numeric_values = np.asarray(values, dtype=float)
+    finite_values = numeric_values[np.isfinite(numeric_values)]
+    if finite_values.size and finite_values.min() >= 0 and finite_values.max() < 50000:
+        # Some environments expose the JPL GRACE time coordinate as raw numeric
+        # days but drop the CF "days since 2002-01-01" metadata.
+        return pd.Timestamp("2002-01-01") + pd.to_timedelta(numeric_values, unit="D")
+
     dates = pd.to_datetime(values, errors="coerce")
     if dates.isna().any() or dates.min() < pd.Timestamp("1990-01-01"):
         raise ValueError(
