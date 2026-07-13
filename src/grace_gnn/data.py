@@ -144,6 +144,37 @@ def read_positive_mask_cells_from_zip(zip_path: Path, member_name: str) -> pd.Da
     return df
 
 
+def _decode_netcdf_dates(time_coord) -> pd.DatetimeIndex:
+    values = time_coord.values
+    if np.issubdtype(np.asarray(values).dtype, np.datetime64):
+        return pd.to_datetime(values)
+
+    units = time_coord.attrs.get("units") or time_coord.encoding.get("units")
+    calendar = time_coord.attrs.get("calendar") or time_coord.encoding.get("calendar") or "standard"
+    if units:
+        try:
+            from netCDF4 import num2date
+
+            decoded = num2date(
+                values,
+                units=units,
+                calendar=calendar,
+                only_use_cftime_datetimes=False,
+                only_use_python_datetimes=False,
+            )
+            return pd.to_datetime(np.asarray(decoded))
+        except Exception as exc:
+            raise ValueError(f"Could not decode NetCDF time coordinate with units {units!r}.") from exc
+
+    dates = pd.to_datetime(values, errors="coerce")
+    if dates.isna().any() or dates.min() < pd.Timestamp("1990-01-01"):
+        raise ValueError(
+            "Could not decode NetCDF time coordinate. Expected datetime values or CF-style "
+            "time units such as 'days since 2002-01-01'."
+        )
+    return dates
+
+
 def download_grace_from_podaac(
     output_dir: Path,
     short_name: str = "TELLUS_GRAC-GRFO_MASCON_GRID_RL06.3_V4",
@@ -283,7 +314,7 @@ def aggregate_grace_netcdf_to_basins(
         series = np.divide(weighted.sum(axis=1), denom, out=np.full(len(ds[time_name]), np.nan), where=denom > 0)
         basin_name = group["basin_name"].iloc[0]
         rows.append(pd.DataFrame({
-            "date": pd.to_datetime(ds[time_name].values),
+            "date": _decode_netcdf_dates(ds[time_name]),
             "basin_id": str(basin_id),
             "basin_name": basin_name,
             "twsa_cm": series,
@@ -353,7 +384,7 @@ def aggregate_grace_netcdf_to_mask_zips(
     lat = np.asarray(ds[lat_name].values, dtype=float)
     lon = np.asarray(ds[lon_name].values, dtype=float)
     lon_geometry = ((lon + 180) % 360) - 180 if np.nanmax(lon) > 180 else lon
-    dates = pd.to_datetime(ds[time_name].values)
+    dates = _decode_netcdf_dates(ds[time_name])
     rows = []
 
     for item in members.itertuples(index=False):
