@@ -242,7 +242,14 @@ def train_baselines(lagged: pd.DataFrame, paths: ExperimentPaths) -> pd.DataFram
         ("correlation_neighbor", lambda: train_correlation_neighbor(splits["train"], splits["val"], splits["test"])),
     ]
     for model_name, trainer in models:
-        _, preds = trainer()
+        try:
+            _, preds = trainer()
+        except Exception as exc:
+            if model_name != "xgboost_ar":
+                raise
+            message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+            print(f"Skipping xgboost_ar because XGBoost is unavailable: {message}")
+            continue
         graph_type = "train_positive_corr_lag1" if model_name == "correlation_neighbor" else "none"
         for split_name, frame in splits.items():
             prediction_parts.append(prediction_frame(frame, preds[split_name], model_name, graph_type, split_name))
