@@ -1,6 +1,6 @@
 # GRACE-Only Mask-Region GNN Experiment Context
 
-Last updated: 2026-07-09
+Last updated: 2026-07-13
 
 ## Core Question
 
@@ -65,8 +65,14 @@ Level 3 test RMSE:
 | Model | Graph type | Test RMSE cm |
 |---|---|---:|
 | ridge_neighbor_residual_mlp | corr_top3_directed | 2.3769 |
+| ridge_neighbor_residual_mlp | random_degree_matched | 2.4707 |
 | ridge_residual_mlp | own_lags | 2.5178 |
+| xgboost_gnn_embedding_residual | corr_top3_directed | 2.5415 |
+| random_forest_gnn_embedding_residual | corr_top3_directed | 2.5434 |
+| ridge_gnn_embedding_residual | corr_top3_directed | 2.5695 |
+| ridge_neighbor_residual_lstm | corr_top3_directed | 2.5932 |
 | ridge_neighbor_ar | corr_top3_directed | 2.6279 |
+| ridge_neighbor_residual_tcn | corr_top3_directed | 2.6288 |
 | ridge_neighbor_ar | real_knn_undirected | 2.6531 |
 | ridge_neighbor_ar | real_knn_reversed | 2.6556 |
 | ridge_neighbor_ar | real_knn_directed | 2.6734 |
@@ -89,6 +95,9 @@ Interpretation:
 - Ridge AR is no longer the best L3 model after adding ridge-anchored residual/neighbor models.
 - The best current L3 model is `ridge_neighbor_residual_mlp` with a train-only correlation top-3 neighbor graph. It improves test RMSE from ridge's 2.7003 cm to 2.3769 cm.
 - `ridge_residual_mlp` using only own-region lags also beats ridge, which suggests the strongest neural contribution is learning nonlinear residual structure on top of the linear AR baseline rather than replacing it.
+- The random degree-matched `ridge_neighbor_residual_mlp` also beats ridge at 2.4707 cm, so the residual MLP gain should be interpreted partly as regularized residual learning rather than only as evidence for meaningful neighbor structure.
+- GNN embedding residual follow-ups with ridge, random forest, and XGBoost backbones fall between 2.5415 and 2.5695 cm. They improve on plain ridge but do not beat the simpler ridge-neighbor residual MLP.
+- Sequence residual variants using the selected correlation graph underperform the MLP residual correction: LSTM reaches 2.5932 cm and TCN reaches 2.6288 cm.
 - Neighbor-augmented ridge models beat plain ridge for the train-correlation graph and the real kNN graphs, while the random degree-matched neighbor ridge is slightly worse than ridge.
 - `ridge_neighbor_residual_mlp` beats ridge in 30 of 37 L3 basins, with median per-basin RMSE improvement of about 0.22 cm.
 - The L3 kNN GNNs are close to basin-only NN but do not beat the ridge-anchored residual models.
@@ -100,10 +109,12 @@ Overall L3 breakdown:
 
 - Best overall model: `ridge_neighbor_residual_mlp` using `corr_top3_directed`, test RMSE 2.3769 cm, MAE 1.5615 cm, Pearson r 0.9818.
 - Best own-region-only model: `ridge_residual_mlp`, test RMSE 2.5178 cm. This beats plain ridge by 0.1825 cm without using neighbors.
+- Best random-control residual model: `ridge_neighbor_residual_mlp` using `random_degree_matched`, test RMSE 2.4707 cm. This is worse than the correlation-neighbor residual MLP but better than the own-lag residual MLP.
+- Best GNN embedding residual model: `xgboost_gnn_embedding_residual` using `corr_top3_directed`, test RMSE 2.5415 cm. It is competitive with the other embedding residual variants but does not improve on the simpler residual MLP models.
 - Best purely linear neighbor model: `ridge_neighbor_ar` using `corr_top3_directed`, test RMSE 2.6279 cm. This beats plain ridge by 0.0725 cm.
 - Best geographic-kNN neighbor ridge: `ridge_neighbor_ar` using `real_knn_undirected`, test RMSE 2.6531 cm. This beats plain ridge by 0.0473 cm.
 - Plain ridge AR remains a strong baseline at 2.7003 cm, but the ridge-anchored residual models now provide the clearest L3 gain.
-- Standalone neural models are weaker: basin-only NN is 2.7835 cm, residual GNNs are 2.7920-2.8516 cm, RNN/GRU lag models are 3.3004-3.3301 cm.
+- Standalone neural models are weaker: basin-only NN is 2.7830 cm, residual GNNs are 2.7909-2.8724 cm, and RNN/GRU lag models are 3.3000-3.3302 cm.
 - The best improvement is not from replacing ridge with a neural network. It is from keeping ridge as the backbone and learning residual corrections, especially with train-correlation neighbor lags.
 - The correlation-neighbor result is stronger than centroid-kNN for L3, matching the broader pattern that statistical similarity graphs can outperform simple geographic-nearest graphs for this GRACE-only task.
 
