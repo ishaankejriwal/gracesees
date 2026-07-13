@@ -13,6 +13,16 @@ REQUIRED_BASIN_MONTH_COLUMNS = {"date", "basin_id", "twsa_cm"}
 MASK_SUFFIXES = (".mask.xyz", ".mask.csv", ".xyz", ".csv")
 
 
+def _is_mask_member(name: str) -> bool:
+    path = Path(name)
+    parts = path.parts
+    if any(part == "__MACOSX" for part in parts):
+        return False
+    if path.name.startswith("._") or path.name.startswith("."):
+        return False
+    return name.endswith(MASK_SUFFIXES)
+
+
 def print_basin_month_requirements() -> None:
     print(
         "Missing basin-month GRACE data.\n"
@@ -89,7 +99,7 @@ def list_mask_members(
     for zip_path in mask_zips:
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
-                if not member.endswith(MASK_SUFFIXES):
+                if not _is_mask_member(member):
                     continue
                 basin_id, basin_name = parse_mask_name(member, strict=strict)
                 if name_filter and name_filter.lower() not in basin_name.lower():
@@ -108,16 +118,25 @@ def list_mask_members(
 def read_positive_mask_cells_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open(member_name) as handle:
-            if member_name.endswith((".mask.csv", ".csv")):
-                df = pd.read_csv(handle, names=["lon", "lat", "weight"], dtype=str, low_memory=False)
-            else:
-                df = pd.read_csv(
-                    handle,
-                    sep=r"\s+",
-                    names=["lon", "lat", "weight"],
-                    engine="python",
-                    dtype=str,
-                )
+            try:
+                if member_name.endswith((".mask.csv", ".csv")):
+                    df = pd.read_csv(handle, names=["lon", "lat", "weight"], dtype=str, low_memory=False)
+                else:
+                    df = pd.read_csv(
+                        handle,
+                        sep=r"\s+",
+                        names=["lon", "lat", "weight"],
+                        engine="python",
+                        dtype=str,
+                    )
+            except UnicodeDecodeError as exc:
+                raise UnicodeDecodeError(
+                    exc.encoding,
+                    exc.object,
+                    exc.start,
+                    exc.end,
+                    f"{exc.reason}; failed while reading {member_name!r} from {zip_path}",
+                ) from exc
     for column in ["lon", "lat", "weight"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
     df = df.dropna(subset=["lon", "lat", "weight"])
