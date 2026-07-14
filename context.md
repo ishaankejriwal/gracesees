@@ -1,6 +1,6 @@
 # GRACE-Only Mask-Region GNN Experiment Context
 
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 ## Core Question
 
@@ -118,7 +118,35 @@ Overall L3 breakdown:
 - The best improvement is not from replacing ridge with a neural network. It is from keeping ridge as the backbone and learning residual corrections, especially with train-correlation neighbor lags.
 - The correlation-neighbor result is stronger than centroid-kNN for L3, matching the broader pattern that statistical similarity graphs can outperform simple geographic-nearest graphs for this GRACE-only task.
 
-Previous Level 2 run:
+## Africa L3 Walk-Forward Robustness
+
+Source files:
+
+- Runner: `scripts/run_africa_l3_walk_forward_top5.py`
+- Outputs: `outputs/africa_l3_no_madagascar/walk_forward_top5/`
+- Main tables: `predictions_walk_forward.csv`, `metrics_by_fold.csv`, `metrics_summary.csv`, `rankings_by_fold.csv`, `graph_audit.csv`
+
+This is a robustness check for the current RMSE top-five Africa L3 models. It does not replace the canonical final 70/10/20 split above. Each fold preserves time order: training starts at 2003-04 and expands, validation is the 12 available GRACE dates immediately before the test block, and test is the next 24 available GRACE dates. Because GRACE has missing months, a 24-date fold is not always a clean two-calendar-year span.
+
+Walk-forward summary:
+
+| Model | Graph type | Mean RMSE cm | Median RMSE cm | Worst-fold RMSE cm | Mean rank | Rank-1 folds |
+|---|---|---:|---:|---:|---:|---:|
+| ridge_neighbor_residual_mlp | corr_top3_directed | 2.5207 | 2.4813 | 2.9323 | 1.0 | 5/5 |
+| xgboost_gnn_embedding_residual | corr_top3_directed | 2.6456 | 2.5321 | 2.9700 | 2.8 | 0/5 |
+| random_forest_gnn_embedding_residual | corr_top3_directed | 2.6681 | 2.5742 | 3.0581 | 3.4 | 0/5 |
+| ridge_neighbor_residual_mlp | random_degree_matched | 2.7069 | 2.6950 | 3.0284 | 3.8 | 0/5 |
+| ridge_residual_mlp | own_lags | 2.7131 | 2.6763 | 3.0383 | 4.0 | 0/5 |
+
+Interpretation:
+
+- The old headline result was a single final split: `ridge_neighbor_residual_mlp | corr_top3_directed` won on 2023-04 to 2026-04 with 2.3769 cm test RMSE.
+- The walk-forward audit asks whether that result is stable across earlier chronological test windows among the selected top-five models. It is: the same model ranks first in all five folds.
+- The mean walk-forward RMSE is higher than the final-split RMSE because it averages across multiple periods with different difficulty, not because it reruns the same test window.
+- `corr_top3_directed` is rebuilt inside each fold from that fold's training period only. `graph_audit.csv` records the train period and edge count for each fold.
+- The random degree-matched residual MLP remains useful as a control. It performs worse than the train-correlation neighbor model in the walk-forward audit, but it is close to the own-lag residual MLP, so the neighbor result should still be framed as predictive structure plus residual regularization rather than pure physical neighbor transfer.
+
+## Africa L2 Historical Baseline
 
 > Mainland Africa Level 2 GRACE mask-region next-month TWSA forecasting, excluding Madagascar.
 
@@ -132,18 +160,9 @@ Regions:
 - East Africa Coastal
 - Chad Endorheic
 
-Output folder:
+Output folder: `outputs/africa_l2_no_madagascar/`
 
-- `outputs/africa_l2_no_madagascar/`
-
-Split:
-
-- Chronological 70/10/20 by unique month, keeping every region from a month in the same split.
-- Train: 889 rows, 69.8%, 2003-04 to 2021-09.
-- Validation: 126 rows, 9.9%, 2021-10 to 2023-03.
-- Test: 259 rows, 20.3%, 2023-04 to 2026-04.
-
-Corrected Africa test RMSE:
+Corrected Africa L2 test RMSE:
 
 | Model | Graph type | Test RMSE cm |
 |---|---|---:|
@@ -165,67 +184,23 @@ Interpretation:
 - GNN helps strongly in West Africa, but neighbor mixing hurts or adds little in several other Africa regions.
 - North Africa has very low test variability (`test_std_cm` about 0.60), so its absolute RMSE values are small but not especially strong after normalization.
 
-## South America 70/10/20 Comparison
+## Africa Run Comparison
 
-Comparable South America reruns exist in:
-
-- `outputs/south_america_l2_chrono_70_10_20/`
-- `outputs/south_america_l2_chrono_70_10_20_corr_graph/`
-
-They use the same chronological 70/10/20 split:
-
-- Train: 889 rows, 69.8%, 2003-04 to 2021-09.
-- Validation: 126 rows, 9.9%, 2021-10 to 2023-03.
-- Test: 259 rows, 20.3%, 2023-04 to 2026-04.
-
-South America standard kNN graph test RMSE:
-
-| Model | Graph type | Test RMSE cm |
-|---|---|---:|
-| residual_neighbor_gnn | real_knn_directed | 2.3449 |
-| ridge_ar | none | 2.3468 |
-| residual_neighbor_gnn | real_knn_undirected | 2.3945 |
-| residual_neighbor_gnn | real_knn_reversed | 2.4322 |
-| residual_neighbor_gnn | random_degree_matched | 2.4493 |
-| basin_only_nn | none | 2.5475 |
-| persistence | none | 4.2972 |
-
-South America correlation-graph test RMSE:
-
-| Model | Graph type | Test RMSE cm |
-|---|---|---:|
-| residual_neighbor_gnn | corr_lag1_top3_directed | 2.2594 |
-| residual_neighbor_gnn | real_knn_directed | 2.3449 |
-| ridge_ar | none | 2.3468 |
-| residual_neighbor_gnn | random_corr_degree_matched | 2.3605 |
-| basin_only_nn | none | 2.5475 |
-| xgboost | none | 2.8613 |
-| random_forest | none | 3.0742 |
-
-Interpretation:
-
-- Standard South America kNN GNN and ridge are effectively tied.
-- The clearest South America GNN win comes from the lag-1 correlation graph, not simple geographic kNN.
-- Random graph/correlation graph controls remain important because some gains may reflect graph smoothing/regularization rather than physical hydrologic connectivity.
-
-## Cross-Run Overall Interpretation
-
-Best test RMSE by run:
+Best test RMSE by Africa run:
 
 | Run | Best model | Graph type | Test RMSE cm | Notes |
 |---|---|---|---:|---|
 | Africa L2 no Madagascar | ridge_ar | none | 1.9869 | Coarser 7-region problem; own-region AR wins. |
-| South America L2 70/10/20 corr graph | residual_neighbor_gnn | corr_lag1_top3_directed | 2.2594 | Correlation graph gives the clearest GNN gain. |
-| South America L2 70/10/20 kNN | residual_neighbor_gnn | real_knn_directed | 2.3449 | Essentially tied with ridge at 2.3468. |
 | Africa L3 no Madagascar | ridge_neighbor_residual_mlp | corr_top3_directed | 2.3769 | Finer 37-region problem; ridge plus correlation-neighbor residual correction wins. |
+| Africa L3 walk-forward top-five audit | ridge_neighbor_residual_mlp | corr_top3_directed | 2.5207 mean | Same model ranks first in all five chronological robustness folds. |
 
 How to read this:
 
 - Absolute RMSE is not directly comparable across L2 and L3 as a pure model-quality score because the region definitions and test variability differ.
 - Africa L2 has the lowest RMSE partly because it has only 7 broad regions, so regional averaging smooths the target.
 - Africa L3 is the stronger test of finer spatial structure. In that setting, plain ridge is strong, but adding correlation-neighbor lags plus a residual MLP produces the best current L3 result.
-- Across regions/runs, correlation-based neighbor structure is more promising than centroid-kNN when the goal is prediction. Centroid-kNN is easier to justify geometrically, but it has not been the strongest predictor.
-- The emerging pattern is: own-region lag history is the foundation; neighbor information helps most when added carefully as residual/auxiliary structure rather than used as a standalone replacement.
+- The walk-forward audit supports the final-split ranking for the selected top-five L3 models, but it should be reported as a robustness/stability check rather than a replacement benchmark.
+- The emerging Africa pattern is: own-region lag history is the foundation; neighbor information helps most when added carefully as residual/auxiliary structure rather than used as a standalone replacement.
 
 ## Graph And Model Notes
 
@@ -235,7 +210,7 @@ Current graph variants:
 - `real_knn_undirected`: symmetrized kNN graph.
 - `real_knn_reversed`: reversed directed kNN graph.
 - `random_degree_matched`: placebo preserving source out-degree.
-- South America corr-graph run also includes `corr_lag1_top3_directed` and `random_corr_degree_matched`.
+- `corr_top3_directed`: train-period positive-correlation top-3 graph.
 
 Important graph caveats:
 
@@ -249,7 +224,7 @@ Do not claim:
 
 - The GNN proves physical water movement between basins.
 - Current kNN/correlation edges are hydrologic flow connectivity.
-- Level 2 experiments are fine Amazon or fine Africa sub-basin experiments.
+- Level 2 experiments are fine Africa sub-basin experiments.
 
 Acceptable phrasing:
 
@@ -257,41 +232,13 @@ Acceptable phrasing:
 
 Best current summary:
 
-> Own-region lag history is a very strong baseline. The strongest current results come from ridge-anchored models: plain ridge wins the older Africa L2 run, while Africa L3 is now best with ridge plus train-correlation neighbor lags and a small residual MLP. Correlation-style neighbor graphs have been more predictive than centroid-kNN in the clearest wins, but these graphs should be described as statistical similarity structure, not proven hydrologic flow.
+> Own-region lag history is a very strong baseline. Plain ridge wins the older Africa L2 run, while Africa L3 is now best with ridge plus train-correlation neighbor lags and a small residual MLP. A five-fold walk-forward audit of the current L3 top-five models keeps that same model ranked first in every fold. The correlation graph should be described as statistical similarity structure, not proven hydrologic flow.
 
 ## Near-Term Direction
 
-The next scientific improvement is data/graph definition, not larger neural networks:
+The next scientific improvement is data/graph definition and robustness reporting, not larger neural networks:
 
-- Move from coarse Level 2 masks to finer masks if available, starting with Level 3.
 - Keep the same GRACE-only feature rule unless the scientific question changes.
-- Make region/mask level configurable rather than hard-coded to Africa or South America lists.
+- Keep walk-forward results as a robustness audit beside the canonical final split.
 - Add validation checks for mask count, parsed region names, basin IDs, monthly row counts, graph edge counts, and split counts.
 - Prefer true topology or carefully justified graph definitions over presenting centroid kNN as hydrologic adjacency.
-
-## Level 3 Mask Migration Notes
-
-The current mask ingestion path should mostly work for Level 3 if the new zips preserve the existing format:
-
-- Zip members ending in `.mask.xyz`.
-- Filenames like `HyBas_<numeric_id>_<Name_With_Underscores>_Lev3_quartdeg.mask.xyz`.
-- Whitespace rows with three numeric columns: `lon lat weight`.
-- Positive mask cells indicated by `weight > 0`.
-
-Current reusable functions:
-
-- `find_mask_zips()` and `list_mask_members()` discover mask zip members.
-- `parse_mask_name()` already accepts any `Lev\d+`, not only `Lev2`.
-- `read_positive_mask_cells_from_zip()` reads positive `lon/lat/weight` cells.
-- `aggregate_grace_netcdf_to_mask_zips()` maps mask cells to nearest GRACE grid cells and computes weighted basin-month TWSA.
-- `make_lagged_dataset()` is mask-level agnostic.
-- `build_knn_edges_from_mask_zips()` computes centroid kNN edges from any selected mask list.
-
-Main changes needed before L3:
-
-- Use level-specific processed paths such as `basin_month_grace_l3.csv` and `lagged_grace_dataset_l3.csv`; otherwise notebook 01 may reuse stale L2 CSVs.
-- Replace hard-coded `AFRICA_L2_NO_MADAGASCAR_BASIN_NAMES` with generic selected basin names or IDs.
-- Prefer selection by `basin_id` if L3 names are unstable or duplicated.
-- Make mask filename parsing strict; silently falling back to the whole filename would hide bad L3 naming.
-- Add duplicate checks for `basin_id` across archives.
-- Expect runtime/output size to grow roughly with the number of L3 masks.
