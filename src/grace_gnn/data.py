@@ -45,6 +45,29 @@ def find_first_file(directory: Path, suffixes: Iterable[str]) -> Path | None:
     return None
 
 
+def find_grace_netcdf(directory: Path, expected_name: str | None = None) -> Path:
+    """Find the GRACE mascon NetCDF without falling through to unrelated .nc files."""
+    candidates = sorted(
+        path
+        for path in directory.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in {".nc", ".nc4"}
+        and ("grace" in path.name.lower() or "grctellus" in path.name.lower())
+    )
+    if expected_name is not None:
+        exact = [path for path in candidates if path.name == expected_name]
+        if exact:
+            return exact[0]
+        expected_path = directory / expected_name
+        raise FileNotFoundError(f"Expected GRACE NetCDF was not found: {expected_path}")
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise FileNotFoundError(f"No GRACE NetCDF found in {directory}")
+    names = ", ".join(path.name for path in candidates)
+    raise ValueError(f"Multiple GRACE NetCDF candidates found; specify one explicitly: {names}")
+
+
 def find_mask_zips(directory: Path) -> list[Path]:
     if not directory.exists():
         return []
@@ -348,3 +371,86 @@ def aggregate_grace_netcdf_to_mask_zips(
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(output_csv, index=False)
     return out
+
+
+def aggregate_era5_netcdf_to_mask_zips(
+    era5_nc_path: Path,
+    mask_zips: list[Path],
+    output_csv: Path,
+    basin_name_filter: str | None = None,
+    basin_name_exclude: str | None = None,
+) -> pd.DataFrame:
+    """Aggregate ERA5 monthly fields to HydroBASINS masks with mask and area weights.
+
+    ERA5 total precipitation, evaporation, and runoff are read in meters and written
+    in millimeters. Evaporation is stored as positive loss magnitude.
+    """
+    try:
+        import xarray as xr
+    except ImportError as exc:
+        raise ImportError("Install xarray and netcdf4 for ERA5 NetCDF preprocessing.") from exc
+
+    members = list_mask_members(mask_zips, basin_name_filter, strict=True)
+    if basin_name_exclude and not members.empty:
+        members = members[
+            ~members["basin_name"].str.contains(basin_name_exclude, case=False, na=False)
+        ].copy()
+    if members.empty:
+        raise FileNotFoundError("No .mask.xyz files matched the requested basin filter.")
+    from .validation import validate_unique_mask_members
+
+    validate_unique_mask_members(members)
+
+    ds = xr.open_dataset(era5_nc_path)
+    required_vars = {"tp", "e", "ro"}
+    missing_vars = required_vars - set(ds.data_vars)
+    if missing_vars:
+        raise ValueError(f"ERA5 NetCDF is missing variables: {sorted(missing_vars)}")
+
+    lat_name = next((n for n in ["lat", "latitude", "y"] if n in ds.coords), None)
+    lon_name = next((n for n in ["lon", "longitude", "x"] if n in ds.coords), None)
+    time_name = next((n for n in ["valid_time", "time", "date"] if n in ds.coords), None)
+    if not all([lat_name, lon_name, time_name]):
+        raise ValueError("ERA5 NetCDF needs recognizable time, latitude, and longitude coordinates.")
+
+    variables = {
+        "era5_tp_mm": ds["tp"].transpose(time_name, lat_name, lon_name).values * 1000.0,
+        "era5_evap_mm": ds["e"].transpose(time_name, lat_name, lon_name).values * -1000.0,
+        "era5_ro_mm": ds["ro"].transpose(time_name, lat_name, lon_name).values * 1000.0,
+    }
+    lat = np.asarray(ds[lat_name].values, dtype=float)
+    lon = np.asarray(ds[lon_name].values, dtype=float)
+    lon_geometry = ((lon + 180) % 360) - 180 if np.nanmax(lon) > 180 else lon
+    dates = pd.to_datetime(ds[time_name].values).to_period("M").to_timestamp()
+    rows = []
+
+    for item in members.itertuples(index=False):
+        print(f"Aggregating ERA5 for {item.basin_name}")
+        mask = read_positive_mask_cells_from_zip(Path(item.zip_path), item.member_name)
+        mask_lon = ((mask["lon"].to_numpy() + 180) % 360) - 180
+        mask_lat = mask["lat"].to_numpy()
+        lat_idx = _nearest_indices(lat, mask_lat)
+        lon_idx = _nearest_indices(lon_geometry, mask_lon)
+        weights = mask["weight"].to_numpy() * np.cos(np.deg2rad(mask_lat))
+        out = {
+            "date": dates,
+            "basin_id": str(item.basin_id),
+            "basin_name": item.basin_name,
+        }
+        for column, values in variables.items():
+            cell_values = values[:, lat_idx, lon_idx]
+            valid = np.isfinite(cell_values)
+            weighted = np.where(valid, cell_values, 0.0) * weights
+            denom = valid @ weights
+            out[column] = np.divide(
+                weighted.sum(axis=1),
+                denom,
+                out=np.full(len(dates), np.nan),
+                where=denom > 0,
+            )
+        rows.append(pd.DataFrame(out))
+
+    out_df = pd.concat(rows, ignore_index=True).sort_values(["basin_id", "date"])
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(output_csv, index=False)
+    return out_df

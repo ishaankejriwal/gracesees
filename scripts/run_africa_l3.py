@@ -14,6 +14,7 @@ from grace_gnn.config import (
     BASIN_MONTH_PROVENANCE_JSON,
     DATA_RAW,
     EXPERIMENT_REGION,
+    GRACE_NETCDF_NAME,
     LAGGED_DATASET_CSV,
     LAGGED_DATASET_PROVENANCE_JSON,
     LAGS,
@@ -34,7 +35,7 @@ from grace_gnn.config import (
 from grace_gnn.correlation import region_correlation_matrix, region_correlation_pairs
 from grace_gnn.data import (
     aggregate_grace_netcdf_to_mask_zips,
-    find_first_file,
+    find_grace_netcdf,
     list_mask_members,
     read_basin_month_csv,
 )
@@ -113,9 +114,7 @@ def _lagged_provenance(basin_month_provenance: dict) -> dict:
 
 def build_basin_month(force: bool = True) -> pd.DataFrame:
     ensure_dirs()
-    grace_nc = find_first_file(DATA_RAW, [".nc", ".nc4"])
-    if grace_nc is None:
-        raise FileNotFoundError(f"No GRACE NetCDF found in {DATA_RAW}")
+    grace_nc = find_grace_netcdf(DATA_RAW, GRACE_NETCDF_NAME)
 
     mask_zip = _l3_mask_zip()
     members = _selected_l3_mask_members()

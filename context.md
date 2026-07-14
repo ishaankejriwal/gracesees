@@ -1,4 +1,4 @@
-# GRACE-Only Africa Forecasting Context
+# Africa Forecasting Context
 
 Last updated: 2026-07-14
 
@@ -6,7 +6,7 @@ Last updated: 2026-07-14
 
 Do neighboring-region GRACE/GRACE-FO terrestrial water storage anomaly (TWSA) histories improve regional TWSA forecasting beyond strong own-region lag baselines?
 
-Constraint: model inputs are GRACE/GRACE-FO TWSA time series only. Masks/geometries define regions and some graph edges, but ERA5 or other climate drivers are not used in these runs.
+Default benchmark constraint: model inputs are GRACE/GRACE-FO TWSA time series only. Masks/geometries define regions and some graph edges. ERA5 is now tracked as a separate add-on experiment, not part of the GRACE-only benchmark.
 
 ## Current Active Experiment
 
@@ -57,6 +57,26 @@ Compact read:
 - Plain ridge AR is still strong at 2.7003 cm RMSE, but ridge plus residual correction is better.
 - The random degree-matched residual model also performs well, so the neighbor gain should be described cautiously: it is predictive structure plus residual regularization, not proof of physical hydrologic transfer.
 - GNN embedding residual models are competitive but do not beat the simpler ridge-neighbor residual MLP.
+
+## ERA5 Add-On One-Month Result
+
+Source folder: `outputs/africa_l3_era5_one_month/`.
+
+Runner: `scripts/run_africa_l3_era5_one_month.py`.
+
+This keeps the monthly `target_twsa_cm` target and adds only lagged ERA5 precipitation, runoff, and evaporation features. No target-month ERA5 columns are used.
+
+Best test result:
+
+| Model | Graph type | RMSE cm | MAE cm | Pearson r | Delta vs GRACE-only best |
+|---|---|---:|---:|---:|---:|
+| ridge_neighbor_residual_mlp_era5 | corr_top3_directed | 1.8494 | 1.2324 | 0.9890 | -0.5276 |
+
+Compact read:
+
+- ERA5 is useful in this first one-month pass: the best ERA5 model beats the GRACE-only best, 1.8494 vs 2.3769 cm RMSE.
+- It also beats the ERA5 random-degree control, 1.8494 vs 1.8786 cm RMSE.
+- Treat this as an add-on result until walk-forward ERA5 validation is run.
 
 ## GRACE-Only 1-6 Month Horizon Results
 
@@ -158,6 +178,7 @@ Small, low-overwhelm CSVs:
 | 1-6 month basin-level horizon metrics | `outputs/africa_l3_no_madagascar/grace_only_horizons/metrics_by_basin_horizon.csv` |
 | Walk-forward robustness summary | `outputs/africa_l3_no_madagascar/walk_forward_top5/metrics_summary.csv` |
 | Walk-forward fold rankings | `outputs/africa_l3_no_madagascar/walk_forward_top5/rankings_by_fold.csv` |
+| ERA5 one-month summary | `outputs/africa_l3_era5_one_month/era5_vs_grace_only_summary.csv` |
 
 Avoid sending by default because they are large and too detailed for a first look:
 
@@ -168,4 +189,4 @@ Avoid sending by default because they are large and too detailed for a first loo
 
 ## Current Short Summary
 
-For the canonical one-month Africa L3 task, the best model is `ridge_neighbor_residual_mlp | corr_top3_directed` at 2.3769 cm test RMSE. A walk-forward top-five audit keeps the same model ranked first in all five folds. In the new GRACE-only horizon benchmark, horizon 1 aligns with the canonical result, and RMSE rises from about 2.38 cm at 1 month to about 5.53 cm at 6 months.
+For the canonical one-month Africa L3 GRACE-only task, the best model is `ridge_neighbor_residual_mlp | corr_top3_directed` at 2.3769 cm test RMSE. Adding lagged ERA5 improves the first one-month pass to 1.8494 cm, beating its random-degree control, but still needs walk-forward validation. In the GRACE-only horizon benchmark, horizon 1 aligns with the canonical result, and RMSE rises from about 2.38 cm at 1 month to about 5.53 cm at 6 months.
