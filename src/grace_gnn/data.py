@@ -11,6 +11,25 @@ import pandas as pd
 REQUIRED_BASIN_MONTH_COLUMNS = {"date", "basin_id", "twsa_cm"}
 
 
+def _netcdf_dates(ds, time_name: str) -> pd.DatetimeIndex:
+    values = ds[time_name].values
+    if np.issubdtype(values.dtype, np.datetime64):
+        return pd.to_datetime(values)
+
+    attrs = ds[time_name].attrs
+    units = attrs.get("units") or attrs.get("Units") or ""
+    match = re.match(r"\s*(\w+)\s+since\s+(.+?)\s*$", str(units), flags=re.IGNORECASE)
+    if not match:
+        return pd.to_datetime(values)
+
+    unit, origin = match.groups()
+    unit = unit.lower()
+    origin = origin.replace("T", " ").replace("Z", "")
+    if unit not in {"day", "days"}:
+        return pd.to_datetime(values, unit=unit[0], origin=pd.Timestamp(origin))
+    return pd.Timestamp(origin) + pd.to_timedelta(values.astype(float), unit="D")
+
+
 def print_basin_month_requirements() -> None:
     print(
         "Missing basin-month GRACE data.\n"
@@ -271,7 +290,7 @@ def aggregate_grace_netcdf_to_basins(
         series = np.divide(weighted.sum(axis=1), denom, out=np.full(len(ds[time_name]), np.nan), where=denom > 0)
         basin_name = group["basin_name"].iloc[0]
         rows.append(pd.DataFrame({
-            "date": pd.to_datetime(ds[time_name].values),
+            "date": _netcdf_dates(ds, time_name),
             "basin_id": str(basin_id),
             "basin_name": basin_name,
             "twsa_cm": series,
@@ -340,7 +359,7 @@ def aggregate_grace_netcdf_to_mask_zips(
     lat = np.asarray(ds[lat_name].values, dtype=float)
     lon = np.asarray(ds[lon_name].values, dtype=float)
     lon_geometry = ((lon + 180) % 360) - 180 if np.nanmax(lon) > 180 else lon
-    dates = pd.to_datetime(ds[time_name].values)
+    dates = _netcdf_dates(ds, time_name)
     rows = []
 
     for item in members.itertuples(index=False):
@@ -421,7 +440,7 @@ def aggregate_era5_netcdf_to_mask_zips(
     lat = np.asarray(ds[lat_name].values, dtype=float)
     lon = np.asarray(ds[lon_name].values, dtype=float)
     lon_geometry = ((lon + 180) % 360) - 180 if np.nanmax(lon) > 180 else lon
-    dates = pd.to_datetime(ds[time_name].values).to_period("M").to_timestamp()
+    dates = _netcdf_dates(ds, time_name).to_period("M").to_timestamp()
     rows = []
 
     for item in members.itertuples(index=False):

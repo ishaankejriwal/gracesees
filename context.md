@@ -40,22 +40,22 @@ Top test RMSE results:
 |---:|---|---|---:|---:|---:|
 | 1 | ridge_neighbor_residual_mlp | corr_top3_directed | 2.3769 | 1.5615 | 0.9818 |
 | 2 | ridge_neighbor_residual_mlp | random_degree_matched | 2.4707 | 1.6543 | 0.9802 |
-| 3 | ridge_residual_mlp | own_lags | 2.5178 | 1.6602 | 0.9797 |
-| 4 | xgboost_gnn_embedding_residual | corr_top3_directed | 2.5415 | 1.7262 | 0.9791 |
-| 5 | random_forest_gnn_embedding_residual | corr_top3_directed | 2.5434 | 1.7250 | 0.9790 |
-| 6 | ridge_gnn_embedding_residual | corr_top3_directed | 2.5695 | 1.7191 | 0.9787 |
-| 7 | ridge_neighbor_residual_lstm | corr_top3_directed | 2.5932 | 1.7370 | 0.9785 |
-| 8 | ridge_neighbor_ar | corr_top3_directed | 2.6279 | 1.7543 | 0.9782 |
-| 9 | ridge_neighbor_residual_tcn | corr_top3_directed | 2.6288 | 1.7615 | 0.9781 |
-| 10 | ridge_neighbor_ar | real_knn_undirected | 2.6531 | 1.7872 | 0.9779 |
-| 11 | ridge_neighbor_ar | real_knn_reversed | 2.6556 | 1.7849 | 0.9779 |
-| 12 | ridge_neighbor_ar | real_knn_directed | 2.6734 | 1.8024 | 0.9776 |
+| 3 | ridge_neighbor_residual_mlp | random_incoming_top3 | 2.4906 | 1.6434 | 0.9799 |
+| 4 | ridge_residual_mlp | own_lags | 2.5178 | 1.6602 | 0.9797 |
+| 5 | xgboost_gnn_embedding_residual | corr_top3_directed | 2.5415 | 1.7262 | 0.9791 |
+| 6 | random_forest_gnn_embedding_residual | corr_top3_directed | 2.5434 | 1.7250 | 0.9790 |
+| 7 | ridge_gnn_embedding_residual | corr_top3_directed | 2.5695 | 1.7191 | 0.9787 |
+| 8 | ridge_neighbor_residual_lstm | corr_top3_directed | 2.5932 | 1.7370 | 0.9785 |
+| 9 | ridge_neighbor_ar | corr_top3_directed | 2.6279 | 1.7543 | 0.9782 |
+| 10 | ridge_neighbor_residual_tcn | corr_top3_directed | 2.6288 | 1.7615 | 0.9781 |
+| 11 | ridge_neighbor_ar | real_knn_undirected | 2.6531 | 1.7872 | 0.9779 |
+| 12 | ridge_neighbor_ar | real_knn_reversed | 2.6556 | 1.7849 | 0.9779 |
 
 Compact read:
 
 - The best current one-month L3 model is `ridge_neighbor_residual_mlp | corr_top3_directed`.
 - Plain ridge AR is still strong at 2.7003 cm RMSE, but ridge plus residual correction is better.
-- The random degree-matched residual model also performs well, so the neighbor gain should be described cautiously: it is predictive structure plus residual regularization, not proof of physical hydrologic transfer.
+- Both random controls also perform well, but the train-correlation graph still beats them on the JPL final split. Describe the neighbor gain cautiously: it is predictive structure plus residual regularization, not proof of physical hydrologic transfer.
 - GNN embedding residual models are competitive but do not beat the simpler ridge-neighbor residual MLP.
 
 ## ERA5 Add-On One-Month Result
@@ -75,7 +75,7 @@ Best test result:
 Compact read:
 
 - ERA5 is useful in this first one-month pass: the best ERA5 model beats the GRACE-only best, 1.8494 vs 2.3769 cm RMSE.
-- It also beats the ERA5 random-degree control, 1.8494 vs 1.8786 cm RMSE.
+- It also beats the ERA5 random controls: 1.8494 vs 1.8786 cm for `random_degree_matched` and 1.9615 cm for `random_incoming_top3`.
 - Treat this as an add-on result until walk-forward ERA5 validation is run.
 
 ## GRACE-Only 1-6 Month Horizon Results

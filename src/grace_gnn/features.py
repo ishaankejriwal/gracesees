@@ -120,11 +120,13 @@ def make_lagged_grace_era5_dataset(
 
 
 def filter_region(df: pd.DataFrame, region: str = "africa_l2_no_madagascar") -> pd.DataFrame:
-    if region not in {"africa_l2_no_madagascar", "africa_l3_no_madagascar"}:
+    if region not in {"africa_l2_no_madagascar", "africa_l3_no_madagascar"} and not region.startswith(
+        "africa_l3_no_madagascar_"
+    ):
         raise ValueError(f"Unknown region: {region}")
     if "basin_name" not in df.columns:
         raise ValueError("Region filtering requires a basin_name column.")
-    if region == "africa_l3_no_madagascar":
+    if region == "africa_l3_no_madagascar" or region.startswith("africa_l3_no_madagascar_"):
         out = df[~df["basin_name"].str.contains("madagascar", case=False, na=False)].copy()
         return out
     keep = set(AFRICA_L2_NO_MADAGASCAR_BASIN_NAMES)
