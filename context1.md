@@ -1,6 +1,6 @@
 # CSR Africa L3 Forecasting Context
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 ## Short Answer
 
@@ -133,6 +133,57 @@ This is nearly tied with same-time correlation top-2 and is easier to explain as
 | CSR+ERA5 | `ridge_neighbor_ar_era5` | 5 | 2.9912 | 3.0050 | 2.9967 | yes |
 
 Geographic neighbors support the idea that nearby basins can help in GRACE-only mode. They are not the best ERA5 evidence because the residual MLP geographic result does not beat matched random controls.
+
+## Top-5 Models Beyond One Month
+
+Source folder: `outputs/africa_l3_no_madagascar_csr/top5_horizons_2_6/`.
+
+Runner: `scripts/run_csr_top5_horizons.py`.
+
+This reruns the five headline top-2 residual MLP models for horizons 2-6 months ahead. Each horizon is trained separately. Features are issue-date only:
+
+- GRACE: `lag_0`, `lag_1`, `lag_2`, `lag_5`, `lag_11`.
+- CSR+ERA5: the same GRACE lags plus lagged ERA5 precipitation, runoff, and evaporation available at or before the issue date.
+- Target: `target_twsa_cm` at `issue_date + horizon_months`.
+- Split: chronological 70/10/20 by `target_date` for each horizon.
+
+Top-2 selected graph results on the test split:
+
+| Horizon | Dataset | Model | Graph type | RMSE cm | MAE cm | Pearson r | Beats matched random top-2 controls |
+|---:|---|---|---|---:|---:|---:|---|
+| 2 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `corr_top2_directed` | 4.7363 | 3.2562 | 0.9269 | yes |
+| 2 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `pred_issue_top2_directed` | 5.1859 | 3.5664 | 0.9119 | no |
+| 2 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `geo_incoming_top2` | 5.7931 | 4.0863 | 0.8934 | no |
+| 2 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `corr_top2_directed` | 3.7119 | 2.5577 | 0.9560 | yes |
+| 2 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `pred_issue_top2_directed` | 3.8951 | 2.6779 | 0.9515 | no |
+| 3 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `corr_top2_directed` | 7.2711 | 5.1113 | 0.8390 | no |
+| 3 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `pred_issue_top2_directed` | 6.1585 | 4.2347 | 0.8701 | no |
+| 3 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `geo_incoming_top2` | 6.0030 | 4.2576 | 0.8763 | yes |
+| 3 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `corr_top2_directed` | 4.3931 | 3.0487 | 0.9360 | no |
+| 3 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `pred_issue_top2_directed` | 4.7725 | 3.3186 | 0.9241 | no |
+| 4 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `corr_top2_directed` | 7.7695 | 5.3408 | 0.8125 | no |
+| 4 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `pred_issue_top2_directed` | 6.5588 | 4.6495 | 0.8508 | no |
+| 4 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `geo_incoming_top2` | 6.6324 | 4.6709 | 0.8485 | no |
+| 4 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `corr_top2_directed` | 4.7204 | 3.2730 | 0.9255 | yes |
+| 4 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `pred_issue_top2_directed` | 4.6682 | 3.2023 | 0.9282 | yes |
+| 5 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `corr_top2_directed` | 8.1575 | 5.6581 | 0.7826 | no |
+| 5 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `pred_issue_top2_directed` | 5.6881 | 4.0405 | 0.8877 | yes |
+| 5 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `geo_incoming_top2` | 8.2728 | 5.6668 | 0.7734 | no |
+| 5 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `corr_top2_directed` | 4.9268 | 3.4020 | 0.9171 | yes |
+| 5 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `pred_issue_top2_directed` | 5.0274 | 3.5223 | 0.9163 | yes |
+| 6 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `corr_top2_directed` | 6.4328 | 4.3482 | 0.8699 | yes |
+| 6 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `pred_issue_top2_directed` | 5.6256 | 3.8438 | 0.8937 | yes |
+| 6 | CSR GRACE-only | `ridge_neighbor_residual_mlp` | `geo_incoming_top2` | 6.4808 | 4.4475 | 0.8677 | no |
+| 6 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `corr_top2_directed` | 5.5664 | 3.7394 | 0.9001 | yes |
+| 6 | CSR+ERA5 | `ridge_neighbor_residual_mlp_era5` | `pred_issue_top2_directed` | 5.2320 | 3.5766 | 0.9099 | yes |
+
+Compact read:
+
+- The answer is mixed, not a blanket yes.
+- CSR+ERA5 top-2 neighbors remain useful more consistently than GRACE-only top-2 neighbors beyond one month. ERA5 selected graphs beat the own-lag ERA5 residual baseline at horizons 2, 3, 4, 5, and 6 for at least one selected graph, and beat all matched random controls at horizons 2, 4, 5, and 6.
+- CSR GRACE-only selected neighbors beat the own-lag residual baseline for most horizons, but the matched-random test is less consistent. Clean wins occur for correlation top-2 at horizons 2 and 6, geographic top-2 at horizon 3, and predictive issue-date top-2 at horizons 5 and 6.
+- Horizon 4 GRACE-only is the weakest graph-structure case: all three selected GRACE-only graphs beat the own-lag baseline, but none beat all matched random controls.
+- Keep the older `corr_top3_directed` horizon run below as historical/supporting context. This top-5 top-2 run is the main beyond-one-month CSR result.
 
 ## Best Current Framing
 
@@ -291,6 +342,9 @@ Small CSR CSVs:
 | CSR correlation top-k ERA5 sweep | `outputs/africa_l3_no_madagascar_csr/corr_topk_sweep_era5/topk_summary.csv` |
 | CSR predictive lag top-k ERA5 sweep | `outputs/africa_l3_no_madagascar_csr/predictive_lag_topk_sweep_era5/topk_summary.csv` |
 | CSR geographic top-k ERA5 sweep | `outputs/africa_l3_no_madagascar_csr/geographic_topk_sweep_era5/topk_summary.csv` |
+| CSR top-5 2-6 month horizon summary | `outputs/africa_l3_no_madagascar_csr/top5_horizons_2_6/top5_summary_by_horizon.csv` |
+| CSR top-5 2-6 month random controls | `outputs/africa_l3_no_madagascar_csr/top5_horizons_2_6/random_control_summary_by_horizon.csv` |
+| CSR top-5 2-6 month validation | `outputs/africa_l3_no_madagascar_csr/top5_horizons_2_6/run_validation.json` |
 | CSR ERA5 one-month summary | `outputs/africa_l3_no_madagascar_csr/era5_one_month/era5_vs_grace_only_summary.csv` |
 | CSR ERA5 heavy architecture ranking | `outputs/africa_l3_no_madagascar_csr/era5_heavy_architectures/heavy_architecture_summary.csv` |
 | CSR ERA5 SVR ranking | `outputs/africa_l3_no_madagascar_csr/era5_svr/svr_summary.csv` |
@@ -311,6 +365,7 @@ CSR figures:
 Avoid sending by default because they are large:
 
 - `outputs/africa_l3_no_madagascar_csr/predictions.csv`
+- `outputs/africa_l3_no_madagascar_csr/top5_horizons_2_6/predictions_by_horizon.csv`
 - `outputs/africa_l3_no_madagascar_csr/grace_only_horizons/predictions_by_horizon.csv`
 - `outputs/africa_l3_no_madagascar_csr/walk_forward_top5/predictions_walk_forward.csv`
 - `outputs/africa_l3_no_madagascar_csr/era5_one_month/predictions.csv`
