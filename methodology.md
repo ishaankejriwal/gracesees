@@ -130,6 +130,7 @@ Geographic graphs are based on mask centroids:
 - `real_knn_directed`: three nearest basin centroids
 - `real_knn_undirected`: symmetrized centroid nearest-neighbor graph
 - `real_knn_reversed`: reversed centroid nearest-neighbor graph
+- `geo_incoming_top{k}`: each target basin receives its k nearest source basins by centroid distance
 
 These are physically intuitive, but they do not always give the best forecast signal.
 
@@ -276,6 +277,14 @@ Predictive lag-correlation result:
 
 Matched random top-2 controls were worse. This supports the claim that selected basin context helps.
 
+Geographic nearest neighbors also helped for GRACE-only:
+
+| Model | Graph | RMSE cm |
+|---|---|---:|
+| ridge_neighbor_residual_mlp | geo_incoming_top2 | 3.2925 |
+
+This beat matched random top-2 controls, but it was weaker than the correlation and predictive lag-correlation top-2 models.
+
 ### CSR+ERA5
 
 Best tuned correlation-context result:
@@ -291,6 +300,14 @@ Predictive lag-correlation result:
 | ridge_neighbor_residual_mlp_era5 | pred_lag1_top2_directed | 2.7499 |
 
 ERA5 improves forecasts beyond CSR GRACE-only. The correlation and predictive-lag neighbor models also beat matched random top-2 controls.
+
+The best geographic residual MLP result with ERA5 was:
+
+| Model | Graph | RMSE cm |
+|---|---|---:|
+| ridge_neighbor_residual_mlp_era5 | geo_incoming_top2 | 2.7971 |
+
+This did not beat the matched random top-2 controls, so geographic neighbors are supporting evidence for GRACE-only but not the strongest ERA5 result.
 
 ## Metrics
 
@@ -346,9 +363,9 @@ Neighbor/context experiments:
 
 - `scripts/run_correlation_topk_sweep.py`
 - `scripts/run_predictive_lag_topk_sweep.py`
+- `scripts/run_geographic_topk_sweep.py`
 - `scripts/run_random_incoming_top3_control.py`
 
 Shareable spreadsheet output:
 
 - `outputs/share_csr_spreadsheets/`
-
